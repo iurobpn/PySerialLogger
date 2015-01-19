@@ -16,6 +16,7 @@ raw_data=bytes();
 port='/dev/ttyACM0'
 baud_rate=115200
 outfile='data.bin'
+data_size=20
 
 def save_data():
   a=1
@@ -60,7 +61,7 @@ def checksum(data):
 #baud_rate: is the baud rate of the serial port
 #size: the number of data points to receive
 #outfile: name of the file to write the data
-def receive_data(port,baud_rate,size,outfile):
+def receive_data():
   #last serves as to check the header, making possible to head one byte
   #at a time to check for the reader.
   if "last" not in receive_data.__dict__: receive_data.last = b'\x00'
@@ -78,7 +79,7 @@ def receive_data(port,baud_rate,size,outfile):
   #open the data file
   log = open(outfile, 'wb')
   
-  while i<size:
+  while i<data_size:
     #verify 
     num_bytes=0;
     while not num_bytes: num_bytes=ser.inWaiting();#wait for a byte
@@ -86,11 +87,11 @@ def receive_data(port,baud_rate,size,outfile):
     #print('Head: ', i , ' ', buffer , ' ', receive_data.last )
     #check the header: 0xFFFF
     if (ord(int2bytes(buffer))==0xFF) and (ord(int2bytes(receive_data.last)) == 0xFF):
-      data_size=ord(ser.read(1))
-      if num_bytes<(2+data_size):
+      pack_size=ord(ser.read(1))
+      if num_bytes<(2+pack_size):
         num_bytes=0
-        while num_bytes<(data_size-1): num_bytes=ser.inWaiting();
-      buffer=int2bytes(data_size) + ser.read(data_size-1)
+        while num_bytes<(pack_size-1): num_bytes=ser.inWaiting();
+      buffer=int2bytes(pack_size) + ser.read(pack_size-1)
       cksum_received=int(buffer[-1])
       
       #remove the checksum received
@@ -137,25 +138,18 @@ def main():
       sys.exit(0)
     else:
       port = args[0]
-  else:
-    port = '/dev/ttyACM0'
 
   if len(args) > 1:
     baud_rate = args[1]
-  else:
-    baud_rate = 115200
 
   if len(args) > 2:
-    data_size = args[2]
-  else:
-    data_size = 100
+    pack_size = args[2]
 
   if len(args) > 3:
     outfile = args[3]
-  else:
-    outfile = 'data.bin'#name of the binary file where to store the data
+
   #number of packages received
-  receive_data(port,baud_rate,data_size,outfile)
+  receive_data()
 
 
 if __name__ == "__main__":
