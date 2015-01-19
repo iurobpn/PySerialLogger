@@ -8,9 +8,23 @@
 
 import sys
 import serial
-import struct
-from servo import process
+import signal
+#import struct
+#from servo import process
 
+raw_data=bytes();
+port='/dev/ttyACM0'
+baud_rate=115200
+outfile='data.bin'
+
+def save_data():
+  a=1
+
+def signal_handler(signal, frame):
+  save_data()
+  sys.exit(0)
+
+#convert from int to bytes
 def int2bytes(i):
   if type(i).__name__=='int':
     return bytes([i])
@@ -19,16 +33,20 @@ def int2bytes(i):
   else:
     return None
 
+#test function to verify the data at the debug time
 def print_data(data):
   for byte in data:
     print(int(byte),end=' ')
   print(' ')
 
+#only to test future conversion to and from floats, never realy implemented or tested
 def teste():
   struct.pack('f', 3.141592654)
   struct.unpack('f', '\xdb\x0fI@')
   struct.pack('4f', 1.0, 2.0, 3.0, 4.0)
 
+#checksum - make sum of verification of the received packages
+#data is a bytes object with all the bytes but the header and checksum ones
 def checksum(data):
   cksum=0
   for byte in data:
@@ -37,72 +55,88 @@ def checksum(data):
   return cksum
 
 
+#sweet receiver, read from serial port and write to a binary file
+#port: is de address of the serial port
+#baud_rate: is the baud rate of the serial port
+#size: the number of data points to receive
+#outfile: name of the file to write the data
 def receive_data(port,baud_rate,size,outfile):
-  #var local
+  #last serves as to check the header, making possible to head one byte
+  #at a time to check for the reader.
   if "last" not in receive_data.__dict__: receive_data.last = b'\x00'
+
+  #opens and configures the serial port
   ser = serial.Serial()
   ser.port=port
   ser.baudrate=baud_rate
   ser.timeout=None
   ser.open()
-  i=0#counter of how many data has been received
-  log = open(outfile, 'wb')#log file for writing the data
-  print('Entering main while')
+  
+  #counter of how many data has been received
+  i=0
+
+  #open the data file
+  log = open(outfile, 'wb')
+  
   while i<size:
-    #print('%d- ' % (i))
+    #verify 
     num_bytes=0;
-    while num_bytes<3: num_bytes=ser.inWaiting();
-    
+    while not num_bytes: num_bytes=ser.inWaiting();#wait for a byte
     buffer=ser.read(1)
-#    print(type(buffer).__name__)
-    print('Head: ', i , ' ', buffer , ' ', receive_data.last )
+    #print('Head: ', i , ' ', buffer , ' ', receive_data.last )
+    #check the header: 0xFFFF
     if (ord(int2bytes(buffer))==0xFF) and (ord(int2bytes(receive_data.last)) == 0xFF):
-      #print('enter header if')
       data_size=ord(ser.read(1))
-      #print(size)
       if num_bytes<(2+data_size):
         num_bytes=0
         while num_bytes<(data_size-1): num_bytes=ser.inWaiting();
       buffer=int2bytes(data_size) + ser.read(data_size-1)
-      print(type(buffer[-1]).__name__)
       cksum_received=int(buffer[-1])
       
+      #remove the checksum received
       data=buffer[0:-1]
-      print('size: ',end=' ')
-      print(data_size)
+      log_print='%d-' % (i)
+      print(log_print,end=' ')
       print('Data:' , end=' ')
       print_data(data)
       cksum_calculated=checksum(data)
-      print('cksum received:', cksum_received, ', cksum calculated:', cksum_calculated)
-      #print(type(cksum_calculated).__name__)
+      data=data[1:]#remove the size byte
+      #print('cksum received:', cksum_received, ', cksum calculated:', cksum_calculated)
       if cksum_received==cksum_calculated:
         i+=1
         #pdata=process(data)#pdata is a list o bytes, 4 per item if float data is present
         #map(int2bytes,pdata)
         #pdata=sum(pdata)#it may be seen redundant now, but in the future others types may be in use
-        log_print='%d- ' % (i)
-        
+        #assuming all the data is float
         log.write(data)
-        print(log_print)
+        #restart the 'last' var so the reader will not be wrongly found
         receive_data.last=0
       else:
         print('error: lost data')
     else:
-      receive_data.last=buffer
-      print('not a package')
+      #since the header doesnt match, read another byte and try again with the current byte as the last
+      receive_data.last=buffer#at this point, buffer is a single byte, and may or may not be matched one of the header bytes
+      #print('not a package')
   ser.close()
   log.close()
 
 
 def main():
+  #not used yet
   args = sys.argv[1:]
   usage = "usage: dasl.py [port(/dev/ttyACM0) baud_rate(115200) data_size output_file(serial.log)]"
   #if not args:
   #  print usage;
   #  sys.exit(1)
 
+  signal.signal(signal.SIGINT, signal_handler)
+
   if len(args) > 0:
-    port = args[0]
+    if args[0]=='-h':
+      print(usage)
+      sys.exit(0)
+    else:
+      port = args[0]
   else:
     port = '/dev/ttyACM0'
 
