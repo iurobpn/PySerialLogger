@@ -9,6 +9,7 @@
 import sys
 import serial
 import signal
+import argparse
 #import struct
 #from servo import process
 
@@ -123,30 +124,20 @@ def receive_data():
 
 
 def main():
-  #not used yet
-  args = sys.argv[1:]
-  usage = "usage: dasl.py [port(/dev/ttyACM0) baud_rate(115200) data_size output_file(serial.log)]"
-  #if not args:
-  #  print usage;
-  #  sys.exit(1)
+  parser = argparse.ArgumentParser()
+  parser.add_argument("-p", "--serialport", type=str, help="(default=/dev/ttyACM0)",default="/dev/ttyACM0")
+  parser.add_argument("-n", "--data_size", type=int, help="the number of data 'points'to be received(default=0, no limite, hit Ctrl+c to quit and save the data to file)",default=0)
+  parser.add_argument("-f", "--output_file", type=str, help="name of the binary data file to be created(default=data.bin)",default="data.bin")
+  parser.add_argument("-b", "--baudrate", type=int,help="(default=115200)",default=115200)
+  args=parser.parse_args()
+  
+  
 
   signal.signal(signal.SIGINT, signal_handler)
-
-  if len(args) > 0:
-    if args[0]=='-h':
-      print(usage)
-      sys.exit(0)
-    else:
-      port = args[0]
-
-  if len(args) > 1:
-    baud_rate = args[1]
-
-  if len(args) > 2:
-    pack_size = args[2]
-
-  if len(args) > 3:
-    outfile = args[3]
+  baud_rate=args.baudrate
+  outfile=args.output_file
+  data_size=args.data_size
+  port=args.serialport
 
   #number of packages received
   receive_data()
