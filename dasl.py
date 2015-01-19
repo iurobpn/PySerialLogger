@@ -10,20 +10,36 @@ import sys
 import serial
 import signal
 import argparse
-#import struct
+import struct
 #from servo import process
 
-raw_data=bytes();
-port='/dev/ttyACM0'
-baud_rate=115200
-outfile='data.bin'
-data_size=20
+#parsing of command line arguments
+parser = argparse.ArgumentParser()
+parser.add_argument("-p", "--serialport", type=str, help="(default=/dev/ttyACM0)",default="/dev/ttyACM0")
+parser.add_argument("-n", "--data_size", type=int, help="the number of data 'points'to be received(default=0, no limite, hit Ctrl+c to quit and save the data to file)",default=20)
+parser.add_argument("-f", "--output_file", type=str, help="name of the binary data file to be created(default=data.bin)",default="data.bin")
+parser.add_argument("-b", "--baudrate", type=int,help="(default=115200)",default=115200)
+args=parser.parse_args()
+
+#global variables
+baud_rate=args.baudrate
+outfile=args.output_file
+data_size=args.data_size
+port=args.serialport
+data_list=[]
+pack_size=0
 
 def save_data():
-  a=1
+  binfile = open(outfile, 'wb')
+  binfile.write(struct.pack('i',len(data_list)))
+  #binfile.write(struct.pack('i',pack_size))
+  for pack in data_list:
+    binfile.write(pack)
+  binfile.close
 
 def signal_handler(signal, frame):
   save_data()
+  print("\nexiting due to user hit of Ctrl+c")
   sys.exit(0)
 
 #convert from int to bytes
@@ -79,8 +95,7 @@ def receive_data():
 
   #open the data file
   log = open(outfile, 'wb')
-  
-  while i<data_size:
+  while (data_size==0) or (i<data_size):
     #verify 
     num_bytes=0;
     while not num_bytes: num_bytes=ser.inWaiting();#wait for a byte
@@ -106,11 +121,7 @@ def receive_data():
       #print('cksum received:', cksum_received, ', cksum calculated:', cksum_calculated)
       if cksum_received==cksum_calculated:
         i+=1
-        #pdata=process(data)#pdata is a list o bytes, 4 per item if float data is present
-        #map(int2bytes,pdata)
-        #pdata=sum(pdata)#it may be seen redundant now, but in the future others types may be in use
-        #assuming all the data is float
-        log.write(data)
+        data_list.append(data)
         #restart the 'last' var so the reader will not be wrongly found
         receive_data.last=0
       else:
@@ -124,23 +135,11 @@ def receive_data():
 
 
 def main():
-  parser = argparse.ArgumentParser()
-  parser.add_argument("-p", "--serialport", type=str, help="(default=/dev/ttyACM0)",default="/dev/ttyACM0")
-  parser.add_argument("-n", "--data_size", type=int, help="the number of data 'points'to be received(default=0, no limite, hit Ctrl+c to quit and save the data to file)",default=0)
-  parser.add_argument("-f", "--output_file", type=str, help="name of the binary data file to be created(default=data.bin)",default="data.bin")
-  parser.add_argument("-b", "--baudrate", type=int,help="(default=115200)",default=115200)
-  args=parser.parse_args()
-  
-  
-
   signal.signal(signal.SIGINT, signal_handler)
-  baud_rate=args.baudrate
-  outfile=args.output_file
-  data_size=args.data_size
-  port=args.serialport
 
   #number of packages received
   receive_data()
+  save_data()
 
 
 if __name__ == "__main__":
