@@ -53,12 +53,12 @@ docs/_build/
 # PyBuilder
 target/
 
+aux/
 *.bin
 servo.py
 teste.py
 le_serial.py
 send_herkulex.py
-*.c
 *.out
 *~
-*.m
+

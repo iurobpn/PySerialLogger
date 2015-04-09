@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
-# Serial Logger for Data Aquisition
-#file: dasl.py
-#Author: Iuro Nascimento
-#Date(dd/mm/yyyy): 14/01/2015
-# Finished on 19/01/2015
+########################################################
+## Serial Logger for Data Aquisition
+#    File: slog.py
+#    Author: Iuro Nascimento
+#    Date(dd/mm/yyyy): 14/01/2015
+#    Finish date: 19/01/2015
+#######################################################
 
 import sys
 import serial
@@ -16,7 +17,7 @@ from datetime import datetime, time, date
 #from servo import process
 
 #parsing of command line arguments
-parser = argparse.ArgumentParser(description="Log serial data received with the format |0xFFFF | lenght(1 byte) | checksum(1 byte) | into a binary file with the format: | data_size(in bytes, 4bytes) | raw_binary_data |. The purpose of this script is to log data from microcontrollers with in a more secure way than just throwing data over the serial port and reading on the computer with any verification whatsoever.")
+parser = argparse.ArgumentParser(description="Log serial data received with the format |0xFFFF | lenght(1 byte) | checksum1(1 byte) | checksum2(1 byte) | into a binary file with the format: | data_size(in bytes, 4bytes) | raw_binary_data |. The purpose of this script is to log data from microcontrollers with in a more secure way than just throwing data over the serial port and reading on the computer with any verification whatsoever.")
 parser.add_argument("-p", "--serialport", type=str, help="(default=/dev/ttyACM0)",default="/dev/ttyUSB0")
 parser.add_argument("-n", "--data_size", type=int, help="the number of data 'points'to be received(default=0, no limite, hit Ctrl+c to quit and save the data to file)",default=0)
 parser.add_argument("-f", "--output_file", type=str, help="name of the binary data file to be created(default=data.bin)",default="data")
@@ -50,7 +51,6 @@ def save_data():
 
   binfile = open(outfile, 'wb')
   binfile.write(struct.pack('i',len(data_list)))
-  #binfile.write(struct.pack('i',pack_size))
   for pack in data_list:
     binfile.write(pack)
   binfile.close
@@ -72,7 +72,7 @@ def int2bytes(i):
 #test function to verify the data at the debug time
 def print_data(data):
   for byte in data:
-    print(int(byte),end=' ')
+    print(byte,end=' ')
   print(' ')
 
 #only to test future conversion to and from floats, never realy implemented or tested
@@ -81,14 +81,46 @@ def teste():
   struct.unpack('f', '\xdb\x0fI@')
   struct.pack('4f', 1.0, 2.0, 3.0, 4.0)
 
-#checksum - make sum of verification of the received packages
+#checksum - make the sum of verification of the received packages
 #data is a bytes object with all the bytes but the header and checksum ones
-def checksum(data):
+#use the raw buffer as parameter, without the header.
+def checksum1(buffer):
   cksum=0
-  for byte in data:
+#  data=buffer[2:]
+  data=buffer[:-2]
+  
+  for byte in data: #byte é um INTEIRO!!!
     cksum=cksum^int(byte)
   cksum=cksum&0xFE
+
   return cksum
+
+
+
+#checksum2 - more of the checksum
+#int has to be an integer 
+def checksum2(checksum1):
+  return (~checksum1) & 0xFE;
+
+
+#check the integrity of a received package
+def check_package(buffer):
+    cksum1_received=int(buffer[-2])
+    cksum2_received=int(buffer[-1])
+    
+    cksum1_calculated=checksum1(buffer)
+    cksum2_calculated=checksum2(cksum1_calculated)
+    print('cksum received: (', cksum1_received, ', ', cksum2_received,')')
+    print('cksum calculated: (', cksum1_calculated, ', ', cksum2_calculated,')')
+
+    return cksum1_calculated==cksum1_received and cksum2_calculated==cksum2_received
+
+def print_data(data):
+  for byte in data:
+    print(byte,end=' ')
+  print(' ')
+
+
 
 
 #sweet receiver, read from serial port and write to a binary file
@@ -106,7 +138,11 @@ def receive_data():
   ser.port=port
   ser.baudrate=baud_rate
   ser.timeout=None
-  ser.open()
+  try:
+    ser.open()
+  except:
+    print('error: could not open serial port ',port,'. Try using other port with: slog -p port.')
+    exit(1)
   
   #counter of how many data has been received
   i=0
@@ -120,27 +156,28 @@ def receive_data():
     #print('Head: ', i , ' ', buffer , ' ', receive_data.last )
     #check the header: 0xFFFF
     if (ord(int2bytes(buffer))==0xFF) and (ord(int2bytes(receive_data.last)) == 0xFF):
-      pack_size=ord(ser.read(1))
+      tmp=ser.read(1)
+      #print(tmp)
+      pack_size=ord(tmp)
       if num_bytes<(2+pack_size):
         num_bytes=0
         while num_bytes<(pack_size-1): num_bytes=ser.inWaiting();
       buffer=int2bytes(pack_size) + ser.read(pack_size-1)
-      cksum_received=int(buffer[-1])
-      
+
       #remove the checksum received
-      data=buffer[0:-1]
+      
       log_print='%d-' % (i)
       print(log_print,end=' ')
-      print('Data:' , end=' ')
-      print_data(data)
-      cksum_calculated=checksum(data)
-      data=data[1:]#remove the size byte
-      #print('cksum received:', cksum_received, ', cksum calculated:', cksum_calculated)
-      if cksum_received==cksum_calculated:
+      
+      if check_package(buffer):
         i+=1
-        data_list.append(data)
-        #restart the 'last' var so the reader will not be wrongly found
+        data=buffer[0:-2]#remove the 2 checksum bytes
+        data=data[1:]#remove the size byte
+        #restart the 'last' var so the header will not be wrongly found
         receive_data.last=0
+        data_list.append(data)
+        print('Data:' , end=' ')
+        print_data(data)
       else:
         print('error: lost data')
     else:
