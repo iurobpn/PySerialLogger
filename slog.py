@@ -17,8 +17,8 @@ from datetime import datetime, time, date
 
 #parsing of command line arguments
 parser = argparse.ArgumentParser(description="Log serial data received with the format |0xFFFF | lenght(1 byte) | checksum(1 byte) | into a binary file with the format: | data_size(in bytes, 4bytes) | raw_binary_data |. The purpose of this script is to log data from microcontrollers with in a more secure way than just throwing data over the serial port and reading on the computer with any verification whatsoever.")
-parser.add_argument("-p", "--serialport", type=str, help="(default=/dev/ttyUSB0)",default="/dev/ttyUSB0")
-parser.add_argument("-n", "--data_size", type=int, help="the number of data 'points'to be received(default=0, no limite, hit Ctrl+c to quit and save the data to file)",default=20)
+parser.add_argument("-p", "--serialport", type=str, help="(default=/dev/ttyACM0)",default="/dev/ttyUSB0")
+parser.add_argument("-n", "--data_size", type=int, help="the number of data 'points'to be received(default=0, no limite, hit Ctrl+c to quit and save the data to file)",default=0)
 parser.add_argument("-f", "--output_file", type=str, help="name of the binary data file to be created(default=data.bin)",default="data")
 parser.add_argument("-b", "--baudrate", type=int,help="(default=115200)",default=115200)
 parser.add_argument("-d", "--datetime", help="turn off the date, time and .bin extension at the and of filename",action='store_true')
@@ -35,6 +35,8 @@ pack_size=0
 
 def save_data():
   global outfile
+  if not len(data_list):
+    return
   if not dtime:
     current_date=datetime.today()
     hour=current_date.hour
