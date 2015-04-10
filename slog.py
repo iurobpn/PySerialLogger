@@ -75,16 +75,13 @@ def print_data(data):
     print(byte,end=' ')
   print(' ')
 
-#only to test future conversion to and from floats, never realy implemented or tested
-def teste():
-  struct.pack('f', 3.141592654)
-  struct.unpack('f', '\xdb\x0fI@')
-  struct.pack('4f', 1.0, 2.0, 3.0, 4.0)
-
 #checksum - make the sum of verification of the received packages
 #data is a bytes object with all the bytes but the header and checksum ones
 #use the raw buffer as parameter, without the header.
 def checksum1(buffer):
+  #assert(type(buffer).__name__=='bytes')
+  #assert(not buffer.isdigit())
+
   cksum=0
 #  data=buffer[2:]
   data=buffer[:-2]
@@ -92,7 +89,7 @@ def checksum1(buffer):
   for byte in data: #byte é um INTEIRO!!!
     cksum=cksum^int(byte)
   cksum=cksum&0xFE
-
+  #assert(type(cksum).__name__=='int')
   return cksum
 
 
@@ -100,20 +97,24 @@ def checksum1(buffer):
 #checksum2 - more of the checksum
 #int has to be an integer 
 def checksum2(checksum1):
+  #assert(type(checksum1).__name__=='int')
   return (~checksum1) & 0xFE;
 
 
 #check the integrity of a received package
 def check_package(buffer):
-    cksum1_received=int(buffer[-2])
-    cksum2_received=int(buffer[-1])
-    
-    cksum1_calculated=checksum1(buffer)
-    cksum2_calculated=checksum2(cksum1_calculated)
-    print('cksum received: (', cksum1_received, ', ', cksum2_received,')')
-    print('cksum calculated: (', cksum1_calculated, ', ', cksum2_calculated,')')
+  #assert(type(buffer).__name__=='bytes')
+  #assert(not buffer.isdigit())
 
-    return cksum1_calculated==cksum1_received and cksum2_calculated==cksum2_received
+  cksum1_received=int(buffer[-2])
+  cksum2_received=int(buffer[-1])
+  
+  cksum1_calculated=checksum1(buffer)
+  cksum2_calculated=checksum2(cksum1_calculated)
+  #print('cksum received: (', cksum1_received, ', ', cksum2_received,')')
+  #print('cksum calculated: (', cksum1_calculated, ', ', cksum2_calculated,')')
+
+  return cksum1_calculated==cksum1_received and cksum2_calculated==cksum2_received
 
 def print_data(data):
   for byte in data:
@@ -124,7 +125,7 @@ def print_data(data):
 
 
 #sweet receiver, read from serial port and write to a binary file
-#port: is de address of the serial port
+#port: is de address of the serial
 #baud_rate: is the baud rate of the serial port
 #size: the number of data points to receive
 #outfile: name of the file to write the data
@@ -141,8 +142,10 @@ def receive_data():
   try:
     ser.open()
   except:
-    print('error: could not open serial port ',port,'. Try using other port with: slog -p port.')
+    print('Error: could not open serial port ',port,'. Try to use another port with "-p port" option.')
     exit(1)
+  print("Serial port ",port,"conected, waiting for data.")
+  print("Hit 'ctrl+c' to save the data and exit at any time.")
   
   #counter of how many data has been received
   i=0
@@ -171,8 +174,8 @@ def receive_data():
       
       if check_package(buffer):
         i+=1
-        data=buffer[0:-2]#remove the 2 checksum bytes
-        data=data[1:]#remove the size byte
+        data=buffer[0:-2]#remove 2 checksum bytes
+        data=data[1:]#remove size byte
         #restart the 'last' var so the header will not be wrongly found
         receive_data.last=0
         data_list.append(data)

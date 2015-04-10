@@ -14,6 +14,30 @@ $ ./slog.py -h
 ```
 for more information about other possible configurations such as port, baudrate and others.
 
+## Instalation ##
+
+You need to install python 3.* and the pyserial module for python 3.*. In ubuntu:
+
+``` bash
+$ sudo apt-get update
+$ sudo apt-get install python3 python3-serial
+
+```
+
+I recommend that you make a symlink in '/usr/local/bin/' to have a liberty to use this script in any directory and just to type 'slog'. You can make a clone of this repo in  directory, 'dir', and make a symlink as in the code below.
+
+
+``` bash
+$ sudo ln -s path-to-dir/dir/pyseriallogger/slog.py /usr/local/bin/slog
+```
+
+In my case:
+
+``` bash
+$ sudo ln -s /home/myusername/git/pyseriallogger/slog.py /usr/local/bin/slog
+```
+
+
 ## Implementation ##
 
 An example of implementation in c for the packing of the data to be sent is giving below:
