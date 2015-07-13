@@ -103,8 +103,8 @@ def checksum2(checksum1):
 
 #check the integrity of a received package
 def check_package(buffer):
-  #assert(type(buffer).__name__=='bytes')
-  #assert(not buffer.isdigit())
+  assert(type(buffer).__name__=='bytes')
+  assert(len(buffer)>2)
 
   cksum1_received=int(buffer[-2])
   cksum2_received=int(buffer[-1])
@@ -144,7 +144,7 @@ def receive_data():
   except:
     print('Error: could not open serial port ',port,'. Try to use another port with "-p port" option.')
     exit(1)
-  print("Serial port ",port,"conected, waiting for data.")
+  print("Serial port ",port,"conected at",baud_rate,"bps, waiting for data.")
   print("Hit 'ctrl+c' to save the data and exit at any time.")
   
   #counter of how many data has been received
