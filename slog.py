@@ -14,6 +14,7 @@ import signal
 import argparse
 import struct
 from datetime import datetime, time, date
+import binascii
 #from servo import process
 
 #parsing of command line arguments
@@ -23,6 +24,7 @@ parser.add_argument("-n", "--data_size", type=int, help="the number of data 'poi
 parser.add_argument("-f", "--output_file", type=str, help="name of the binary data file to be created(default=data.bin)",default="data")
 parser.add_argument("-b", "--baudrate", type=int,help="(default=115200)",default=115200)
 parser.add_argument("-d", "--datetime", help="turn off the date, time and .bin extension at the and of filename",action='store_true')
+parser.add_argument("-r", "--repeat", help="print the receive data directly to stdout",action='store_true')
 args=parser.parse_args()
 
 #global variables
@@ -31,6 +33,7 @@ outfile=args.output_file
 data_size=args.data_size
 port=args.serialport
 dtime=args.datetime
+repeat=args.repeat
 data_list=[]
 pack_size=0
 
@@ -190,12 +193,45 @@ def receive_data():
   ser.close()
 
 
+def repeater():
+  #opens and configures the serial port
+  ser = serial.Serial()
+  ser.port=port
+  ser.baudrate=baud_rate
+  ser.timeout=None
+  try:
+    ser.open()
+  except:
+    print('Error: could not open serial port ',port,'. Try to use another port with "-p port" option.')
+    exit(1)
+  print("Hit 'ctrl+c' to save the data and exit at any time.")
+
+  data_list = b''
+  while 1:
+    num_bytes=0;
+    while not num_bytes: 
+        num_bytes=ser.inWaiting()#wait for a byte
+    buffer=ser.read(num_bytes)
+    print(byte2str(buffer),end='')
+    # print(buffer)
+    data_list += buffer
+
+
+def byte2str(byte):
+    out = ''
+    for ch in byte:
+        out+=chr(ch)
+    return out
+
 def main():
   signal.signal(signal.SIGINT, signal_handler)
 
   #number of packages received
-  receive_data()
-  save_data()
+  if repeat:
+    repeater()
+  else:
+    receive_data()
+    save_data()
 
 
 if __name__ == "__main__":

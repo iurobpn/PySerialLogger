@@ -61,4 +61,14 @@ le_serial.py
 send_herkulex.py
 *.out
 *~
-
+2015.01.27/
+cpp/
+miniterm.py
+modelo_servo.mat
+read_binary_file.m
+ros_slog.py
+serial.c
+serial2.py
+servo_sfun.mexa64
+slprj/
+tags
