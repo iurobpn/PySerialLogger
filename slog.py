@@ -14,8 +14,112 @@ import signal
 import argparse
 import struct
 from datetime import datetime, time, date
-import binascii
-#from servo import process
+import threading
+import socket
+import select
+import queue
+
+
+message_queue = queue.Queue()
+message_queues = {}
+TIMEOUT=1000 
+# Commonly used flag setes
+READ_ONLY = select.POLLIN | select.POLLPRI | select.POLLHUP | select.POLLERR
+READ_WRITE = READ_ONLY | select.POLLOUT
+
+# thread class for a tcp server
+class serverThread (threading.Thread):
+  def __init__(self, port):
+    threading.Thread.__init__(self)
+    self.port=port
+    # self.soc = socket.socket()
+
+  def run(self):
+    global message_queue
+    global message_queues
+
+    try:
+      server = socket.socket()         # Create a socket object
+      host = ''                   # Get local machine name
+      server.bind((host, self.port))        # Bind to the port
+      server.listen(5)                 # Now wait for client connection.
+      poller = select.poll()
+      poller.register(server, READ_ONLY)
+      fd_to_socket = { server.fileno(): server,}
+    except Exception as er:
+      print(str(er))
+
+    while True:
+      if mutex.acquire(False):
+        if kill_server:
+          mutex.release()
+          break
+        mutex.release()
+      events = poller.poll(TIMEOUT)
+      for fd, flag in events:
+        # Retrieve the actual socket from its file descriptor
+        s = fd_to_socket[fd]
+        # Handle inputs
+        if flag & (select.POLLIN | select.POLLPRI):
+          if s is server:
+            # A "readable" server socket is ready to accept a connection
+            connection, client_address = server.accept()
+            print('new connection from', client_address)
+            connection.setblocking(0)
+            fd_to_socket[ connection.fileno() ] = connection
+            poller.register(connection, READ_WRITE)
+
+            # Give the connection a queue for data we want to send
+            message_queues[connection] = queue.Queue()
+          else:
+            try:
+              data = s.recv(1024)
+            except:
+              poller.unregister(s)
+              s.close()
+            else:
+              if data:
+                # A readable client socket has data
+                print('received "%s" from %s' % (data, s.getpeername()))
+                message_queues[s].put(data)
+                # Add output channel for response
+                poller.modify(s, READ_WRITE)
+              else:
+                # Interpret empty result as closed connection
+                print('closing', client_address, 'after reading no data')
+                # Stop listening for input on the connection
+                poller.unregister(s)
+                s.close()
+                # Remove message queue
+                del message_queues[s]
+        elif flag & select.POLLHUP:
+          # Client hung up
+          print('closing', client_address, 'after receiving HUP')
+          # Stop listening for input on the connection
+          poller.unregister(s)
+          s.close()
+        elif flag & select.POLLOUT:
+          # Socket is ready to send data, if there is any to send.
+          message_queues[s].put(b'any data')
+          try:
+            next_msg = message_queues[s].get_nowait()
+          except queue.Empty:
+            # No messages waiting so stop checking for writability.
+            print('output queue for', s.getpeername(), 'is empty')
+            # poller.modify(s, READ_ONLY)
+          else:
+            try:
+              print('sending "%s" to %s' % (next_msg, s.getpeername()))
+              s.send(next_msg)
+            except:
+              poller.unregister(s)
+              s.close()
+
+  def stop(self):
+    # self.soc.shutdown(socket.SHUT_RDWR)
+    self.soc.close()
+
+
 
 #parsing of command line arguments
 parser = argparse.ArgumentParser(description="Log serial data received with the format |0xFFFF | lenght(1 byte) | checksum1(1 byte) | checksum2(1 byte) | into a binary file with the format: | data_size(in bytes, 4bytes) | raw_binary_data |. The purpose of this script is to log data from microcontrollers with in a more secure way than just throwing data over the serial port and reading on the computer with any verification whatsoever.")
@@ -25,6 +129,7 @@ parser.add_argument("-f", "--output_file", type=str, help="name of the binary da
 parser.add_argument("-b", "--baudrate", type=int,help="(default=115200)",default=115200)
 parser.add_argument("-d", "--datetime", help="turn off the date, time and .bin extension at the and of filename",action='store_true')
 parser.add_argument("-r", "--repeat", help="print the receive data directly to stdout",action='store_true')
+parser.add_argument("-t", "--tcp_port", type=int,help="(default=5353)",default=5353)
 args=parser.parse_args()
 
 #global variables
@@ -34,11 +139,22 @@ data_size=args.data_size
 port=args.serialport
 dtime=args.datetime
 repeat=args.repeat
+tcp_port=args.tcp_port
 data_list=[]
 pack_size=0
+kill_server=False
+
+#synchronization variables
+# cv = threading.Condition
+mutex = threading.Lock()
+
+# TCP server
+server = serverThread(tcp_port)
+server.start()
 
 def save_data():
   global outfile
+
   if not len(data_list):
     return
   if not dtime:
@@ -59,8 +175,16 @@ def save_data():
   binfile.close
 
 def signal_handler(signal, frame):
+  global kill_server
+  # global cv 
+  global mutex 
+  # Tell server to kill itself
+  with mutex:
+    kill_server=True
   save_data()
-  print("\nexiting due to user hit of Ctrl+c")
+  print("\nExiting due to user hit of Ctrl+c")
+  # server.stop()
+  server.join()
   sys.exit(0)
 
 #convert from int to bytes
@@ -232,7 +356,6 @@ def main():
   else:
     receive_data()
     save_data()
-
 
 if __name__ == "__main__":
   main();
