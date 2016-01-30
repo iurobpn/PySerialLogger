@@ -19,20 +19,89 @@ import socket
 import select
 import queue
 
-
-message_queue = queue.Queue()
+# Global variables associated to class TCPServer
 message_queues = {}
 TIMEOUT=1000 
 # Commonly used flag setes
 READ_ONLY = select.POLLIN | select.POLLPRI | select.POLLHUP | select.POLLERR
 READ_WRITE = READ_ONLY | select.POLLOUT
 
-# thread class for a tcp server
-class serverThread (threading.Thread):
+
+################# Classe UDPServer ########################################
+
+message_queue = queue.Queue()
+class UDPServer (threading.Thread):
   def __init__(self, port):
     threading.Thread.__init__(self)
     self.port=port
     # self.soc = socket.socket()
+    self.clients = []
+    self.udp_server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+  def broadcast(self, msg):
+    if self.clients:
+      for client in self.clients:
+        self.udp_server.sendto(msg,client)
+        print('sending "%s" to %s' % (msg, client))
+
+  def run(self):
+
+    host = ''                   # Get local machine name
+    try:
+      self.udp_server.bind((host, self.port))        # Bind to the port
+      self.udp_server.setblocking(0)
+
+    except Exception as er:
+      print(str(er))
+
+    # Set up the poller
+    poller = select.poll()
+    poller.register(self.udp_server, READ_ONLY | READ_WRITE)
+    fd_to_socket = { self.udp_server.fileno(): self.udp_server,}
+
+    print("UDP server running")
+    while True:
+      if mutex.acquire(False):
+        if kill_server:
+          mutex.release()
+          print("server is breaking main loop")
+          break
+
+        mutex.release()
+
+      events = poller.poll(TIMEOUT)
+      for fd, flag in events:
+        # Retrieve the actual socket from its file descriptor
+        s = fd_to_socket[fd]
+        # Handle inputs
+        if flag & (select.POLLIN | select.POLLPRI):
+          if s is self.udp_server:
+            # A "readable" udp_server socket is ready to accept a connection
+            data, addr = s.recvfrom(1024) # Establish connection with client.
+            print('new client from', addr)
+            self.clients.append(addr)
+        elif flag & select.POLLOUT:
+          # Socket is ready to send data, if there is any to send.
+          message_queue.put(b'any data\n')
+          try:
+            next_msg = message_queue.get_nowait()
+          except queue.Empty:
+            # No messages waiting so stop checking for writability.
+            print('output queue for', s.getpeername(), 'is empty')
+            # poller.modify(s, READ_ONLY)
+          else:
+            self.broadcast(next_msg)
+
+
+################## Fim da classe UDPserver ################################
+
+
+################# Classe TCPServer ########################################
+# thread class for a tcp server
+class TCPServer (threading.Thread):
+  def __init__(self, port):
+    threading.Thread.__init__(self)
+    self.port=port
 
   def run(self):
     global message_queue
@@ -49,12 +118,17 @@ class serverThread (threading.Thread):
     except Exception as er:
       print(str(er))
 
+    print("TCP server running")
+
     while True:
       if mutex.acquire(False):
         if kill_server:
           mutex.release()
+          print("server is breaking main loop")
           break
+
         mutex.release()
+
       events = poller.poll(TIMEOUT)
       for fd, flag in events:
         # Retrieve the actual socket from its file descriptor
@@ -100,7 +174,7 @@ class serverThread (threading.Thread):
           s.close()
         elif flag & select.POLLOUT:
           # Socket is ready to send data, if there is any to send.
-          message_queues[s].put(b'any data')
+          message_queues[s].put(b'any data\n')
           try:
             next_msg = message_queues[s].get_nowait()
           except queue.Empty:
@@ -115,10 +189,12 @@ class serverThread (threading.Thread):
               poller.unregister(s)
               s.close()
 
-  def stop(self):
-    # self.soc.shutdown(socket.SHUT_RDWR)
-    self.soc.close()
+    #end of while True:
+    poller.unregister(server)
+    server.close()
+    print("Leaving TCP server")
 
+################## Fim da classe TCPserver ################################
 
 
 #parsing of command line arguments
@@ -129,7 +205,9 @@ parser.add_argument("-f", "--output_file", type=str, help="name of the binary da
 parser.add_argument("-b", "--baudrate", type=int,help="(default=115200)",default=115200)
 parser.add_argument("-d", "--datetime", help="turn off the date, time and .bin extension at the and of filename",action='store_true')
 parser.add_argument("-r", "--repeat", help="print the receive data directly to stdout",action='store_true')
-parser.add_argument("-t", "--tcp_port", type=int,help="(default=5353)",default=5353)
+parser.add_argument("-t", "--tcp", help="start a TCP server do distribute readed data",action='store_true')
+parser.add_argument("-u", "--udp", help="start a UDP server do distribute readed data",action='store_true')
+parser.add_argument("-P", "--net_port", type=int,help="TCP or UDP port (default=5353)",default=5353)
 args=parser.parse_args()
 
 #global variables
@@ -139,7 +217,9 @@ data_size=args.data_size
 port=args.serialport
 dtime=args.datetime
 repeat=args.repeat
-tcp_port=args.tcp_port
+tcp=args.tcp
+udp=args.udp
+net_port=args.net_port
 data_list=[]
 pack_size=0
 kill_server=False
@@ -149,8 +229,8 @@ kill_server=False
 mutex = threading.Lock()
 
 # TCP server
-server = serverThread(tcp_port)
-server.start()
+tcp_server = TCPServer(net_port)
+udp_server = UDPServer(net_port)
 
 def save_data():
   global outfile
@@ -176,15 +256,14 @@ def save_data():
 
 def signal_handler(signal, frame):
   global kill_server
-  # global cv 
   global mutex 
-  # Tell server to kill itself
-  with mutex:
-    kill_server=True
+  global server
+
+  release_server()
   save_data()
   print("\nExiting due to user hit of Ctrl+c")
   # server.stop()
-  server.join()
+  # server.join()
   sys.exit(0)
 
 #convert from int to bytes
@@ -251,7 +330,7 @@ def print_data(data):
 
 
 
-#sweet receiver, read from serial port and write to a binary file
+#Receiver, read from serial port and write to a binary file
 #port: is de address of the serial
 #baud_rate: is the baud rate of the serial port
 #size: the number of data points to receive
@@ -269,7 +348,8 @@ def receive_data():
   try:
     ser.open()
   except:
-    print('Error: could not open serial port ',port,'. Try to use another port with "-p port" option.')
+    print('Error: could not open serial port ',port)
+    print('Try to use another serial port with "-p port" option')
     exit(1)
   print("Serial port ",port,"conected at",baud_rate,"bps, waiting for data.")
   print("Hit 'ctrl+c' to save the data and exit at any time.")
@@ -327,6 +407,7 @@ def repeater():
     ser.open()
   except:
     print('Error: could not open serial port ',port,'. Try to use another port with "-p port" option.')
+    release_server()
     exit(1)
   print("Hit 'ctrl+c' to save the data and exit at any time.")
 
@@ -347,8 +428,21 @@ def byte2str(byte):
         out+=chr(ch)
     return out
 
+
+def release_server():
+  with mutex:
+    kill_server=True
+
+
 def main():
   signal.signal(signal.SIGINT, signal_handler)
+
+  if tcp:
+    tcp_server.daemon=True
+    tcp_server.start()
+  elif udp:
+    udp_server.daemon=True
+    udp_server.start()
 
   #number of packages received
   if repeat:
@@ -357,5 +451,8 @@ def main():
     receive_data()
     save_data()
 
+
+
 if __name__ == "__main__":
   main();
+
