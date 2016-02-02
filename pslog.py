@@ -51,6 +51,7 @@ class UDPServer (threading.Thread):
       self.udp_server.setblocking(0)
     except Exception as er:
       print(str(er))
+      exit(1)
 
     # Set up the poller
     poller = select.poll()
@@ -81,15 +82,15 @@ class UDPServer (threading.Thread):
           # Socket is ready to send data, if there is any to send.
           # self.message_queue.put(b'any data\n')
           if not self.message_queue.empty():
-            try:
-              next_msg = self.message_queue.get_nowait()
-            except queue.Empty:
+            # try:
+            next_msg = self.message_queue.get_nowait()
+            # except queue.Empty:
               # No messages waiting so stop checking for writability.
               # print('output queue for', s.getpeername(), 'is empty')
               # poller.modify(s, READ_ONLY)
-              pass
-            else:
-              self.broadcast(next_msg)
+              # pass
+            # else:
+            self.broadcast(next_msg)
 
   def add_message(self,msg):
     if msg:
@@ -115,6 +116,7 @@ class TCPServer (threading.Thread):
       server.listen(5)                 # Now wait for client connection.
     except Exception as er:
       print(str(er))
+      exit(1)
 
     poller = select.poll()
     poller.register(server, READ_ONLY)
@@ -169,22 +171,23 @@ class TCPServer (threading.Thread):
                 del self.message_queues[s]
         elif flag & select.POLLHUP:
           # Client hung up
-          print('closing', client_address, 'after receiving HUP')
+          print('closing', 'after receiving HUP')
           # Stop listening for input on the connection
           poller.unregister(s)
           s.close()
         elif flag & select.POLLOUT:
           # Socket is ready to send data, if there is any to send.
           # self.message_queues[s].put(b'any data\n')
-          try:
+          if not self.message_queues[s].empty():
+          # try:
             # TODO send all queue messages at once or not, maybe let to next call
             next_msg = self.message_queues[s].get_nowait()
-          except queue.Empty:
+          # except queue.Empty:
             # No messages waiting so stop checking for writability.
             # print('output queue for', s.getpeername(), 'is empty')
             # poller.modify(s, READ_ONLY)
-            pass
-          else:
+          #   pass
+          # else:
             try:
               if verbose:
                 print('sending "%s" to %s' % (next_msg, s.getpeername()))
@@ -397,22 +400,52 @@ def receive_data():
   #open the data file
   while (data_size==0) or (i<data_size):
     #verify
+    buffer=b'\x00'
     num_bytes=0;
-    while not num_bytes: num_bytes=ser.inWaiting();#wait for a byte
-    buffer=ser.read(1)
-    #print('Head: ', i , ' ', buffer , ' ', receive_data.last )
+    while not num_bytes:
+      try:
+        num_bytes=ser.inWaiting();#wait for a byte
+      except:
+        print("Error reading serial port")
+        exit(1)
+
+    try:
+      buffer=ser.read(1)
+    except:
+      print("Error reading serial port")
+      exit(1)
+    assert(len(buffer)==1)
+    assert(len(receive_data.last)==1)
     #check the header: 0xFFFF
-    if (ord(int2bytes(buffer))==0xFF) and (ord(int2bytes(receive_data.last)) == 0xFF):
-      tmp=ser.read(1)
+    if verbose:
+      print('Head: ', i , ' ', buffer , ' ', receive_data.last )
+    # if (ord(int2bytes(buffer))==0xFF) and (ord(int2bytes(receive_data.last)) == 0xFF):
+    if (buffer[0] == 0xFF) and (receive_data.last[0] == 0xFF):
+      try:
+        tmp=ser.read(1)
+      except:
+        print("Error reading serial port")
+        exit(1)
       #print(tmp)
       pack_size=ord(tmp)
+      assert(pack_size>=0)
       if num_bytes<(2+pack_size):
         num_bytes=0
-        while num_bytes<(pack_size-1): num_bytes=ser.inWaiting();
-      buffer=int2bytes(pack_size) + ser.read(pack_size-1)
+        while num_bytes<(pack_size-1):
+          try:
+            num_bytes=ser.inWaiting();
+          except:
+            print("Error reading serial port")
+            exit(1)
+      try:
+        buffer=int2bytes(pack_size) + ser.read(pack_size-1)
+      except:
+        print("Error reading serial port")
+        exit(1)
+
+      assert(len(buffer)>0)
 
       #remove the checksum received
-
       log_print='%d-' % (i)
       print(log_print,end=' ')
 
@@ -421,17 +454,21 @@ def receive_data():
         data=buffer[0:-2]#remove 2 checksum bytes
         data=data[1:]#remove size byte
         #restart the 'last' var so the header will not be wrongly found
-        receive_data.last=0
+        receive_data.last=b'\x00'
         data_list.append(data)
         print('Data:' , end=' ')
         print_data(data)
         add_message_to_server(data)
       else:
+        receive_data.last = b'\x00'
         print('error: lost data')
     else:
+      assert(len(buffer)==1)
+      assert(len(receive_data.last)==1)
       #since the header doesnt match, read another byte and try again with the current byte as the last
       receive_data.last=buffer#at this point, buffer is a single byte, and may or may not be matched one of the header bytes
-      #print('not a package')
+      if verbose:
+        print('not a package')
   ser.close()
 
 
@@ -455,8 +492,18 @@ def repeater():
     num_bytes=0;
     buffer=''
     while not num_bytes:
+      try:
         num_bytes=ser.inWaiting()#wait for a byte
-    buffer=ser.read(num_bytes)
+      except:
+        print("Error reading serial port")
+        exit(1)
+
+    try:
+      buffer=ser.read(num_bytes)
+    except:
+      print("Error reading serial port")
+      exit(1)
+
     print(byte2str(buffer),end='')
     # print(buffer)
     data_list += buffer
@@ -475,7 +522,7 @@ def add_message_to_server(msg):
     if tcp_server.isAlive():
       tcp_server.add_message_to_queues(msg)
     if udp_server.isAlive():
-      print("message added",msg)
+      # print("message added",msg)
       udp_server.add_message(msg)
 
 
@@ -497,7 +544,6 @@ def main():
   #number of packages received
   if repeat:
     repeater()
-    save_to_text_file()
   else:
     receive_data()
     save_to_binary_file()
