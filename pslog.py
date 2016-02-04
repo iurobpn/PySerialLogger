@@ -9,12 +9,14 @@
 ########################################################
 
 import sys
+import os
 import serial
 import signal
 import argparse
 import struct
 from datetime import datetime, time, date
 import threading
+import multiprocessing as mp
 import socket
 import select
 import queue
@@ -28,14 +30,14 @@ READ_WRITE = READ_ONLY | select.POLLOUT
 
 
 ################# Classe UDPServer ########################################
-class UDPServer (threading.Thread):
+class UDPServer (mp.Process):
   def __init__(self, port):
-    threading.Thread.__init__(self)
+    mp.Process.__init__(self)
     self.port=port
     # self.soc = socket.socket()
     self.clients = []
     self.udp_server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    self.message_queue = queue.Queue()
+    self.message_queue = mp.Queue()
 
   def broadcast(self, msg):
     if self.clients and msg:
@@ -60,12 +62,12 @@ class UDPServer (threading.Thread):
 
     print("UDP server running")
     while True:
-      if mutex.acquire(False):
-        if kill_server:
-          mutex.release()
-          break
-
-        mutex.release()
+      # if mutex.acquire(False):
+      #   if kill_server:
+      #     mutex.release()
+      #     break
+      #
+      #   mutex.release()
 
       events = poller.poll(TIMEOUT)
       for fd, flag in events:
@@ -96,17 +98,17 @@ class UDPServer (threading.Thread):
     if msg:
       self.message_queue.put(msg)
 
-
 ################## Fim da classe UDPserver ################################
 
 
 ################# Classe TCPServer ########################################
 # thread class for a tcp server
-class TCPServer (threading.Thread):
+class TCPServer (mp.Process):
   def __init__(self, port):
-    threading.Thread.__init__(self)
+    mp.Process.__init__(self)
     self.port=port
     self.message_queues = {}
+    self.message_queue = mp.Queue()
 
   def run(self):
     try:
@@ -124,13 +126,6 @@ class TCPServer (threading.Thread):
     print("TCP server running")
 
     while True:
-      if mutex.acquire(False):
-        if kill_server:
-          mutex.release()
-          break
-
-        mutex.release()
-
       events = poller.poll(TIMEOUT)
       for fd, flag in events:
         # Retrieve the actual socket from its file descriptor
@@ -178,16 +173,13 @@ class TCPServer (threading.Thread):
         elif flag & select.POLLOUT:
           # Socket is ready to send data, if there is any to send.
           # self.message_queues[s].put(b'any data\n')
+          while not self.message_queue.empty():
+            self.add_message_to_queues(self.message_queue.get_nowait())
+
           if not self.message_queues[s].empty():
           # try:
             # TODO send all queue messages at once or not, maybe let to next call
             next_msg = self.message_queues[s].get_nowait()
-          # except queue.Empty:
-            # No messages waiting so stop checking for writability.
-            # print('output queue for', s.getpeername(), 'is empty')
-            # poller.modify(s, READ_ONLY)
-          #   pass
-          # else:
             try:
               if verbose:
                 print('sending "%s" to %s' % (next_msg, s.getpeername()))
@@ -195,16 +187,23 @@ class TCPServer (threading.Thread):
             except:
               poller.unregister(s)
               s.close()
+          else:
+            if verbose:
+              print("empty queue")
 
     #end of while True:
     poller.unregister(server)
     server.close()
     print("Leaving TCP server")
-    #### end of ethod run() #####
+    #### end of method run() #####
 
   def add_message_to_queues(self,msg):
     for k in self.message_queues:
       self.message_queues[k].put(msg)
+
+  def add_message(self,msg):
+    if msg:
+      self.message_queue.put(msg)
 
 ################## Fim da classe TCPserver ################################
 
@@ -237,6 +236,8 @@ net_port=args.net_port
 data_list=[]
 pack_size=0
 kill_server=False
+ser = serial.Serial()
+main_pid = 0
 
 #synchronization variables
 # cv = threading.Condition
@@ -261,17 +262,19 @@ def format_filename(filename,extension):
   return filename
 
 
-def save_to_binary_file():
-  global outfile
+def save_to_binary_file(outfile):
+  global data_list
+  global main_pid
 
   # print("text file")
 
   if not len(data_list):
-    print("no data to save")
+    if main_pid == os.getpid():
+      print("no data to save")
     return
 
   filename = format_filename(outfile,'.bin')
-  print("saving data to binary file",filename)
+  print("\nsaving data to binary file",filename)
   binfile = open(filename, 'wb')
   binfile.write(struct.pack('i',len(data_list)))
   for pack in data_list:
@@ -279,35 +282,51 @@ def save_to_binary_file():
   binfile.close
 
 
-def save_to_text_file():
+def save_to_text_file(outfile):
+  global data_list
+  global main_pid
 
-  global outfile
   print("text file")
   buffer=byte2str(data_list)
   if not len(buffer):
-    print("no data to save")
+    if main_pid == os.getpid():
+      print("no data to save")
     return
 
   filename = format_filename(outfile,'.txt')
-  print("saving data to text file",filename)
+  print("\nsaving data to text file",filename)
   txtfile = open(filename, 'w')
   txtfile.write(buffer)
   txtfile.close()
 
 
 def signal_handler(signal, frame):
-  global kill_server
-  global mutex
-  global server
+  global main_pid
+  global repeat
+  global outfile
+  global data_list
+  global tcp_server
+  global udp_server
 
-  release_server()
+  # release_server()
   if repeat:
-    save_to_text_file()
+    save_to_text_file(outfile)
   else:
-    save_to_binary_file()
-  print("\nExiting due to user hit of Ctrl+c")
-  # server.stop()
-  # server.join()
+    save_to_binary_file(outfile)
+
+  try:
+    tcp_server.terminate()
+  except:
+    pass
+
+  try:
+    udp_server.terminate()
+  except:
+    pass
+
+  if main_pid == os.getpid():
+    ser.close()
+    print("\nExiting due to user hit of Ctrl+c")
   sys.exit(0)
 
 
@@ -321,7 +340,7 @@ def int2bytes(i):
     return None
 
 
-#test function to verify the data at the debug time
+# Test function to verify the data at the debug time
 def print_data(data):
   for byte in data:
     print(byte,end=' ')
@@ -374,13 +393,13 @@ def check_package(buffer):
 # baud_rate: is the baud rate of the serial port
 # size: the number of data points to receive
 # outfile: name of the file to write the data
-def receive_data():
+def receive_data(ser):
+  global data_list
   #last serves as to check the header, making possible to head one byte
   #at a time to check for the reader.
   if "last" not in receive_data.__dict__: receive_data.last = b'\x00'
-
+  # global ser
   #opens and configures the serial port
-  ser = serial.Serial()
   ser.port=port
   ser.baudrate=baud_rate
   print("[ Port:",port,",","Baudrate:",baud_rate,"]")
@@ -405,8 +424,8 @@ def receive_data():
     while not num_bytes:
       try:
         num_bytes=ser.inWaiting();#wait for a byte
-      except:
-        print("Error reading serial port")
+      except Exception as er:
+        print(str(er))
         exit(1)
 
     try:
@@ -472,10 +491,11 @@ def receive_data():
   ser.close()
 
 
-def repeater():
+def repeater(ser):
   global data_list
-  #opens and configures the serial port
-  ser = serial.Serial()
+
+  # global data_list
+  # opens and configures the serial port
   ser.port=port
   ser.baudrate=baud_rate
   ser.timeout=None
@@ -518,10 +538,13 @@ def byte2str(byte):
 
 
 def add_message_to_server(msg):
+  global tcp_server
+  global udp_server
+
   if msg:
-    if tcp_server.isAlive():
-      tcp_server.add_message_to_queues(msg)
-    if udp_server.isAlive():
+    if tcp_server.is_alive():
+      tcp_server.add_message(msg)
+    if udp_server.is_alive():
       # print("message added",msg)
       udp_server.add_message(msg)
 
@@ -532,6 +555,11 @@ def release_server():
 
 
 def main():
+  global ser
+  global tcp_server
+  global udp_server
+  global repeat
+
   signal.signal(signal.SIGINT, signal_handler)
 
   if tcp:
@@ -543,13 +571,47 @@ def main():
 
   #number of packages received
   if repeat:
-    repeater()
+    repeater(ser)
   else:
-    receive_data()
+    receive_data(ser)
     save_to_binary_file()
 
+# read option from a configuration file
+def read_options(filename):
+  file = open(filename, 'r')
+  dict_opt = {}
+  list_opt ={'serialport' : 'str', 'data_size': 'int', 'output_file': 'str', 'baudrate': 'int', 'datetime': 'bool', 'repeat': 'bool', 'tcp': 'bool', 'udp': 'bool', 'verbose': 'bool', 'net_port': 'int'}
+  for line in file:
+    line = line.strip()
+    if line:
+      if line[0] == '#':
+        continue
+      line = line.split('=')
+      for i in range(len(line)):
+        line[i]=line[i].strip()
+      if line[0] in list_opt.keys():
+        if list_opt[line[0]] == 'int':
+          dict_opt[line[0]] = int(line[1])
+        elif list_opt[line[0]] == 'bool':
+          if line[1].lower() == 'false':
+            line[1] = ''
+          dict_opt[line[0]] = bool(line[1])
+        else:
+          dict_opt[line[0]] = line[1]
 
+  return  dict_opt
 
 if __name__ == "__main__":
+  main_pid = os.getpid()
   main();
+  try:
+    tcp_server.terminate()
+  except:
+    pass
+  try:
+    udp_server.terminate()
+  except:
+    pass
+  # tcp_server.join()
+  # udp_server.join()
 
