@@ -28,6 +28,11 @@ TIMEOUT=1000
 READ_ONLY = select.POLLIN | select.POLLPRI | select.POLLHUP | select.POLLERR
 READ_WRITE = READ_ONLY | select.POLLOUT
 
+# global variables some are defined in main()
+data_list=[]
+pack_size=0
+ser = serial.Serial()
+main_pid = 0
 
 ################# Classe UDPServer ########################################
 class UDPServer (mp.Process):
@@ -208,44 +213,74 @@ class TCPServer (mp.Process):
 ################## Fim da classe TCPserver ################################
 
 
-#parsing of command line arguments
+# Parsing of command line arguments
 parser = argparse.ArgumentParser(description="Log serial data received with the format |0xFFFF | lenght(1 byte) | checksum1(1 byte) | checksum2(1 byte) | into a binary file with the format: | data_size(in bytes, 4bytes) | raw_binary_data |. The purpose of this script is to log data from microcontrollers with in a more secure way than just throwing data over the serial port and reading on the computer with any verification whatsoever.")
-parser.add_argument("-p", "--serialport", type=str, help="(default=/dev/ttyACM0)",default="/dev/ttyUSB0")
-parser.add_argument("-n", "--data_size", type=int, help="the number of data 'points'to be received(default=0, no limite, hit Ctrl+c to quit and save the data to file)",default=0)
-parser.add_argument("-f", "--output_file", type=str, help="name of the binary data file to be created(default=data.bin)",default="data")
-parser.add_argument("-b", "--baudrate", type=int,help="(default=115200)",default=115200)
-parser.add_argument("-d", "--datetime", help="turn off the date, time and .bin extension at the and of filename",action='store_true')
-parser.add_argument("-r", "--repeat", help="print the receive data directly to stdout",action='store_true')
-parser.add_argument("-t", "--tcp", help="start a TCP server do distribute readed data",action='store_true')
-parser.add_argument("-u", "--udp", help="start a UDP server do distribute readed data",action='store_true')
-parser.add_argument("-v", "--verbose", help="More information on connections, sending and receiving data are printed on stdout",action='store_true')
-parser.add_argument("-P", "--net_port", type=int,help="TCP or UDP port (default=5353)",default=5353)
-args=parser.parse_args()
+parser.add_argument("-p", "--serialport", type=str, help="(default=/dev/ttyACM0)",default=None)
+parser.add_argument("-n", "--data_size", type=int, help="the number of data 'points'to be received(default=0, no limite, hit Ctrl+c to quit and save the data to file)",default=None)
+parser.add_argument("-f", "--output_file", type=str, help="name of the binary data file to be created(default=data.bin)",default=None)
+parser.add_argument("-b", "--baudrate", type=int,help="(default=115200)",default=None)
+parser.add_argument("-d", "--datetime", help="turn off the date, time and .bin extension at the and of filename",action=None)
+parser.add_argument("-r", "--repeat", help="print the receive data directly to stdout",action=None)
+parser.add_argument("-t", "--tcp", help="start a TCP server do distribute readed data",action=None)
+parser.add_argument("-u", "--udp", help="start a UDP server do distribute readed data",action='store_true',default=None)
+parser.add_argument("-v", "--verbose", help="More information on connections, sending and receiving data are printed on stdout",action=None)
+parser.add_argument("-P", "--net_port", type=int,help="TCP or UDP port (default=5353)",default=None)
 
-#global variables
-baud_rate=args.baudrate
-outfile=args.output_file
-data_size=args.data_size
-port=args.serialport
-dtime=args.datetime
-repeat=args.repeat
-tcp=args.tcp
-udp=args.udp
-verbose=args.verbose
-net_port=args.net_port
-data_list=[]
-pack_size=0
-kill_server=False
-ser = serial.Serial()
-main_pid = 0
+# update options from any source(config file or shell)
+def update_options(args):
+  #global variables
+  global baud_rate
+  global outfile
+  global data_size
+  global port
+  global dtime
+  global repeat
+  global tcp
+  global udp
+  global verbose
+  global net_port
 
-#synchronization variables
-# cv = threading.Condition
-mutex = threading.Lock()
-# TCP server
+  if args.baudrate != None:
+    baud_rate=args.baudrate
+  elif 'baud_rate' not in globals():
+    baud_rate=None
+  if args.output_file != None:
+    outfile=args.output_file
+  elif 'outfile' not in globals():
+    outfile=None
+  if args.data_size != None:
+    data_size=args.data_size
+  elif 'data_size' not in globals():
+    data_size=None
+  if args.serialport != None:
+    port=args.serialport
+  elif 'port' not in globals():
+    port=None
+  if args.datetime != None:
+    dtime=args.datetime
+  elif 'dtime' not in globals():
+    dtime=None
+  if args.repeat != None:
+    repeat=args.repeat
+  elif 'repeat' not in globals():
+    repeat=None
+  if args.tcp != None:
+    tcp=args.tcp
+  elif 'tcp' not in globals():
+    tcp=None
+  if args.udp != None:
+    udp=args.udp
+  elif 'udp' not in globals():
+    udp=None
+  if args.verbose != None:
+    verbose=args.verbose
+  elif 'verbose' not in globals():
+    verbose=None
+  if args.net_port != None:
+    net_port=args.net_port
+  elif 'net_port' not in globals():
+    net_port=None
 
-tcp_server = TCPServer(net_port)
-udp_server = UDPServer(net_port)
 
 def format_filename(filename,extension):
   if not dtime:
@@ -558,9 +593,62 @@ def main():
   global ser
   global tcp_server
   global udp_server
+  global baud_rate
+  global outfile
+  global data_size
+  global port
+  global dtime
   global repeat
+  global tcp
+  global udp
+  global verbose
+  global net_port
+
+  home_config_file = os.path.expanduser('~/.pslogrc')
+  if os.path.isfile('.pslogrc'):
+    options = read_options('.pslogrc')
+    args = parser.parse_args(options)
+    update_options(args)
+  elif os.path.isfile(home_config_file):
+    options = read_options(home_config_file)
+    args = parser.parse_args(options)
+    update_options(args)
+  args=parser.parse_args()
+  update_options(args)
+  print('args:',args)
+
+  # verify default options
+  if not baud_rate:
+    baud_rate=115200
+  if not outfile:
+    outfile='data'
+  if not data_size:
+    data_size = 0;
+  if not port:
+    port='/dev/ttyACM0'
+  if dtime == None:
+    dtime=False
+  if repeat == None:
+    repeat=False
+  if tcp == None:
+    tcp = False
+  if udp == None:
+    udp = False
+  if verbose == None:
+    verbose = False
+  if not net_port:
+    if udp:
+      net_port = 5050
+  else:
+    net_port = 5353
+  print('Final options:', [baud_rate, outfile, data_size, port, dtime, repeat, tcp, udp, net_port])
+  main_pid = os.getpid()
 
   signal.signal(signal.SIGINT, signal_handler)
+
+
+  tcp_server = TCPServer(net_port)
+  udp_server = UDPServer(net_port)
 
   if tcp:
     tcp_server.daemon=True
@@ -580,7 +668,9 @@ def main():
 def read_options(filename):
   file = open(filename, 'r')
   dict_opt = {}
-  list_opt ={'serialport' : 'str', 'data_size': 'int', 'output_file': 'str', 'baudrate': 'int', 'datetime': 'bool', 'repeat': 'bool', 'tcp': 'bool', 'udp': 'bool', 'verbose': 'bool', 'net_port': 'int'}
+  list_opt={'serialport' : '-p', 'data_size': '-n', 'output_file': '-f', 'baudrate': '-b', 'datetime': '-d', 'repeat': '-r', 'tcp': '-t', 'udp': '-u', 'verbose': '-v', 'net_port': '-P'}
+  list_opt_types  ={'serialport' : 'str', 'data_size': 'int', 'output_file': 'str', 'baudrate': 'int', 'datetime': 'bool', 'repeat': 'bool', 'tcp': 'bool', 'udp': 'bool', 'verbose': 'bool', 'net_port': 'int'}
+  opt_list = []
   for line in file:
     line = line.strip()
     if line:
@@ -589,21 +679,28 @@ def read_options(filename):
       line = line.split('=')
       for i in range(len(line)):
         line[i]=line[i].strip()
-      if line[0] in list_opt.keys():
-        if list_opt[line[0]] == 'int':
-          dict_opt[line[0]] = int(line[1])
-        elif list_opt[line[0]] == 'bool':
-          if line[1].lower() == 'false':
-            line[1] = ''
-          dict_opt[line[0]] = bool(line[1])
+      if line[0] in list_opt_types.keys():
+        if list_opt_types[line[0]] == 'int':
+          try:
+            int(line[1])
+          except:
+            pass
+          else:
+            opt_list.append(list_opt[line[0]])
+            opt_list.append(line[1])
+        elif list_opt_types[line[0]] == 'bool':
+          if line[1].lower() == 'true':
+            opt_list.append(list_opt[line[0]])
         else:
-          dict_opt[line[0]] = line[1]
+          opt_list.append(list_opt[line[0]])
+          opt_list.append(line[1])
 
-  return  dict_opt
+  return opt_list
+
+
 
 if __name__ == "__main__":
-  main_pid = os.getpid()
-  main();
+  main()
   try:
     tcp_server.terminate()
   except:
@@ -612,6 +709,4 @@ if __name__ == "__main__":
     udp_server.terminate()
   except:
     pass
-  # tcp_server.join()
-  # udp_server.join()
 
