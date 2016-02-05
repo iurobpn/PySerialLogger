@@ -219,11 +219,11 @@ parser.add_argument("-p", "--serialport", type=str, help="(default=/dev/ttyACM0)
 parser.add_argument("-n", "--data_size", type=int, help="the number of data 'points'to be received(default=0, no limite, hit Ctrl+c to quit and save the data to file)",default=None)
 parser.add_argument("-f", "--output_file", type=str, help="name of the binary data file to be created(default=data.bin)",default=None)
 parser.add_argument("-b", "--baudrate", type=int,help="(default=115200)",default=None)
-parser.add_argument("-d", "--datetime", help="turn off the date, time and .bin extension at the and of filename",action=None)
-parser.add_argument("-r", "--repeat", help="print the receive data directly to stdout",action=None)
-parser.add_argument("-t", "--tcp", help="start a TCP server do distribute readed data",action=None)
+parser.add_argument("-d", "--datetime", help="turn off the date, time and .bin extension at the and of filename",action='store_true',default=None)
+parser.add_argument("-r", "--repeat", help="print the receive data directly to stdout",action='store_true',default=None)
+parser.add_argument("-t", "--tcp", help="start a TCP server do distribute readed data",action='store_true',default=None)
 parser.add_argument("-u", "--udp", help="start a UDP server do distribute readed data",action='store_true',default=None)
-parser.add_argument("-v", "--verbose", help="More information on connections, sending and receiving data are printed on stdout",action=None)
+parser.add_argument("-v", "--verbose", help="More information on connections, sending and receiving data are printed on stdout",action='store_true',default=None)
 parser.add_argument("-P", "--net_port", type=int,help="TCP or UDP port (default=5353)",default=None)
 
 # update options from any source(config file or shell)
@@ -270,6 +270,8 @@ def update_options(args):
     tcp=None
   if args.udp != None:
     udp=args.udp
+    if udp and tcp != None:
+      tcp=False
   elif 'udp' not in globals():
     udp=None
   if args.verbose != None:
@@ -437,7 +439,8 @@ def receive_data(ser):
   #opens and configures the serial port
   ser.port=port
   ser.baudrate=baud_rate
-  print("[ Port:",port,",","Baudrate:",baud_rate,"]")
+  if verbose:
+    print("[ Port:",port,",","Baudrate:",baud_rate,"]")
   ser.timeout=None
   try:
     ser.open()
@@ -615,7 +618,6 @@ def main():
     update_options(args)
   args=parser.parse_args()
   update_options(args)
-  print('args:',args)
 
   # verify default options
   if not baud_rate:
@@ -639,9 +641,12 @@ def main():
   if not net_port:
     if udp:
       net_port = 5050
+    if tcp:
+      net_port = 5353
   else:
     net_port = 5353
-  print('Final options:', [baud_rate, outfile, data_size, port, dtime, repeat, tcp, udp, net_port])
+  if verbose:
+    print('Final options:', [baud_rate, outfile, data_size, port, dtime, repeat, tcp, udp, net_port])
   main_pid = os.getpid()
 
   signal.signal(signal.SIGINT, signal_handler)
